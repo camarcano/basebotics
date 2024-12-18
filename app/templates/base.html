@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basebotics</title>
+
+    <!-- Alpine.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@2.8.2/dist/alpine.min.js" defer></script>
+
+    <!-- Tailwind CSS CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.0.0/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+
+    <!-- Header Section -->
+    <header class="bg-blue-600 text-white p-4">
+        <div class="flex items-center justify-between">
+            <h1 a href="www.baseboics.com" class="text-2xl">Basebotics</h1>
+            <p class="text-sm">Insightful data analysis</p>
+        </div>
+    </header>
+
+    <!-- Navbar Section (Responsive) -->
+    <nav class="flex flex-col md:flex-row items-center justify-between bg-gray-800 p-4">
+        <div class="flex space-x-4">
+            <!-- Navbar Item with Submenu for Home -->
+            <div x-data="{ open: false }" class="relative">
+                <button 
+                    @click="open = !open" 
+                    @click.away="open = false" 
+                    :class="{'bg-blue-700': open, 'hover:bg-blue-600': !open}" 
+                    class="navbar-item px-4 py-2 bg-blue-600 text-white">
+                    Home
+                </button>
+                <!-- Submenu for Home -->
+                <div x-show="open" x-transition @click.away="open = false" 
+                     class="absolute left-0 w-48 mt-2 bg-white shadow-lg rounded-md text-black z-10">
+                    <ul class="p-2">
+                        <li><a href="{{ url_for('base.home') }}" class="block px-4 py-2 hover:bg-gray-100">Base Hub</a></li>
+                        <li><a href="#" class="block px-4 py-2 hover:bg-gray-100">Account</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div x-data="{ open: false }" class="relative">
+                <button 
+                    @click="open = !open" 
+                    @click.away="open = false" 
+                    :class="{'bg-blue-700': open, 'hover:bg-blue-600': !open}" 
+                    class="navbar-item px-4 py-2 bg-blue-600 text-white">
+                    Baseball
+                </button>
+                <!-- Submenu for Baseball -->
+                <div x-show="open" x-transition @click.away="open = false" 
+                     class="absolute left-0 w-48 mt-2 bg-white shadow-lg rounded-md text-black z-10">
+                    <ul class="p-2">
+                        <li><a href="{{ url_for('baseball.baseball') }}" class="block px-4 py-2 hover:bg-gray-100">Baseball Hub</a></li>
+                        <li><a href="#" class="block px-4 py-2 hover:bg-gray-100">Players</a></li>
+                        <!-- Add Trackman Dash -->
+                        <li><a href="{{ url_for('dashboard.dashboard001') }}" class="block px-4 py-2 hover:bg-gray-100">Dashboard</a></li>
+                        <li><a href="{{ url_for('dashboard.dashboard002') }}" class="block px-4 py-2 hover:bg-gray-100">Dashboard 002</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+
+            <!-- Add more Navbar items here (e.g., other sports) -->
+            <div x-data="{ open: false }" class="relative">
+                <button 
+                    @click="open = !open" 
+                    @click.away="open = false" 
+                    :class="{'bg-blue-700': open, 'hover:bg-blue-600': !open}" 
+                    class="navbar-item px-4 py-2 bg-blue-600 text-white">
+                    Basketball
+                </button>
+                <!-- Submenu for Basketball -->
+                <div x-show="open" x-transition @click.away="open = false" 
+                     class="absolute left-0 w-48 mt-2 bg-white shadow-lg rounded-md text-black z-10">
+                    <ul class="p-2">
+                        <li><a href="#" class="block px-4 py-2 hover:bg-gray-100">Teams</a></li>
+                        <li><a href="#" class="block px-4 py-2 hover:bg-gray-100">Stats</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Add more sports as needed... -->
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="p-8">
+        <!-- Yield to child templates -->
+        {% block content %}
+        {% endblock %}
+    </main>
+
+</body>
+</html>
