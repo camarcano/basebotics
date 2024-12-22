@@ -1,9 +1,8 @@
-from flask import Flask, render_template
-import dash
-from dash import Dash, dcc, html, Input, Output, State, dash_table
-import polars as pl
-import io
-import base64
+from flask import Flask
+from dash import Dash, dcc, html, Input, Output, dash_table, State, ClientsideFunction
+from datetime import datetime
+import pandas as pd
+from .utils import DHHCalculator
 
 def create_dash_app(flask_app):
     dash_app = Dash(
@@ -13,174 +12,216 @@ def create_dash_app(flask_app):
         suppress_callback_exceptions=True
     )
 
+    # Add the JavaScript to the app's assets
+    dash_app.clientside_callback(
+        """
+        function(n_clicks) {
+            if (n_clicks > 0) {
+                const button = document.getElementById('download-button');
+                if (button) {
+                    button.style.backgroundColor = '#28a745';
+                    setTimeout(() => {
+                        button.style.backgroundColor = '#007bff';
+                    }, 1000);
+                }
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output('download-button', 'style'),
+        Input('download-button', 'n_clicks'),
+        prevent_initial_call=True
+    )
+
     dash_app.layout = html.Div([
         html.H1("Player Performance Tracker", style={"textAlign": "center"}),
 
-        # Upload component
-        dcc.Upload(
-            id="upload-data",
-            children=html.Div([
-                "Drag and Drop or ",
-                html.A("Select a CSV File")
-            ]),
-            style={
-                "width": "100%",
-                "height": "60px",
-                "lineHeight": "60px",
-                "borderWidth": "1px",
-                "borderStyle": "dashed",
-                "borderRadius": "5px",
-                "textAlign": "center",
-                "margin": "10px",
-            },
-            multiple=False
-        ),
+        # Store for the full dataset
+        dcc.Store(id='stored-data'),
 
+        # Responsive layout for date picker and download button
+        html.Div([
+            html.Div([
+                dcc.DatePickerRange(
+                    id='date-picker-range',
+                    start_date=datetime(2023, 5, 1),
+                    end_date=datetime(2024, 5, 1),
+                    display_format='YYYY-MM-DD',
+                    style={'marginRight': '15px'}
+                )
+            ], style={'flex': '1', 'marginRight': '15px'}),
+            
+            # Download section
+            html.Div([
+                html.Button(
+                    "Download CSV", 
+                    id="download-button", 
+                    n_clicks=0,
+                    style={
+                        "backgroundColor": "#007bff",
+                        "color": "white",
+                        "border": "none",
+                        "padding": "8px 16px",
+                        "transition": "background-color 0.3s"
+                    }
+                ),
+            ], style={'flex': '1'})
+        ], style={'display': 'flex', 'flexWrap': 'wrap', 'alignItems': 'center', 'marginBottom': '20px'}),
+
+        # BBE Filter section with both slider and number input
+        html.Div([
+            html.Label("Filter by Min BBE:", style={'marginRight': '10px'}),
+            html.Div([
+                dcc.Slider(
+                    id='bbe-slider',
+                    min=0,
+                    max=100,  # Will be updated dynamically
+                    value=0,
+                    marks=None,
+                    tooltip={"placement": "bottom", "always_visible": True},
+                    updatemode='drag',
+                    className='custom-slider'
+                ),
+            ], style={'flex': '1', 'marginRight': '15px', 'marginLeft': '15px'}),
+            dcc.Input(
+                id="bbe-input",
+                type="number",
+                value=0,
+                min=0,
+                style={'width': '80px', 'marginLeft': '10px'}
+            )
+        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '20px'}),
+
+        # Table display with loading spinner and records per page selector
+        html.Div([
+            html.Label("Records per page:"),
+            dcc.Dropdown(
+                id="page-size-selector",
+                options=[
+                    {"label": "30", "value": 30},
+                    {"label": "60", "value": 60},
+                    {"label": "90", "value": 90},
+                    {"label": "All", "value": -1}
+                ],
+                value=30,
+                style={'width': '120px', 'marginBottom': '10px'}
+            )
+        ]),
         dcc.Loading(
             id="loading-table",
             type="default",
             children=html.Div(id="output-table")
         ),
 
-        html.Div([
-            html.Label("Select Player:"),
-            dcc.Dropdown(id="player-dropdown", placeholder="Select a player"),
-
-            html.Label("Select Metric:"),
-            dcc.Dropdown(
-                id="metric-dropdown",
-                options=[
-                    {"label": "Pitch Speed", "value": "RelSpeed"},
-                    {"label": "IVB", "value": "InducedVertBreak"},
-                ],
-                multi=True,
-                value=["RelSpeed", "InducedVertBreak"]
-            ),
-
-            html.Label("Select Columns for Filtering:"),
-            dcc.Dropdown(
-                id="column-dropdown",
-                placeholder="Select columns to filter",
-                multi=True
-            ),
-        ], style={"width": "50%", "margin": "auto"}),
-
-        html.Div(id="filter-dropdowns", style={"width": "50%", "margin": "auto"}),
-
-        dcc.Loading(
-            id="loading-stats",
-            type="default",
-            children=html.Div(id="stats-output", style={"marginTop": "20px"})
-        )
+        # Hidden download component
+        dcc.Download(id="download-dataframe"),
     ])
 
     @dash_app.callback(
-        [Output("output-table", "children"),
-         Output("player-dropdown", "options"),
-         Output("column-dropdown", "options")],
-        [Input("upload-data", "contents")],
-        [State("upload-data", "filename")]
+        [Output('stored-data', 'data'),
+         Output('bbe-slider', 'max'),
+         Output('bbe-slider', 'marks')],
+        [Input("date-picker-range", "start_date"),
+         Input("date-picker-range", "end_date")]
     )
-    def update_table(contents, filename):
-        if contents is None:
-            return html.Div("No file uploaded yet."), [], []
+    def update_stored_data(start_date, end_date):
+        parquet_file = '/var/www/basebotics/datab/savant_2023-03-30_2024-09-30.parquet'
+        google_sheet_url = "https://docs.google.com/spreadsheets/d/112FJwhapiSNgxepFJQhJnudk_ub5PI9GBN7DMUKBTjc/export?format=csv"
+        db_file_name = "google_sheet.db"
+        table_name = "google_sheet"
+        output_file = "google_sheet.csv"
 
-        content_type, content_string = contents.split(",")
-        decoded = base64.b64decode(content_string)
+        dhh_calculator = DHHCalculator(parquet_file, google_sheet_url, db_file_name, table_name, output_file)
+
         try:
-            df = pl.read_csv(io.StringIO(decoded.decode("utf-8")))
+            df = dhh_calculator.process(start_date, end_date, 0)  # Get all data
+            
+            # Process the data for storage
+            columns_to_display = [
+                "player_name", "BBE", "DHH%", "Sd(LA)", "LA", "Barrel%",
+                "MaxEV", "P95 EV", "P90 EV", "P50 EV", "EV", "AVG Hit Distance"
+            ]
+            df = df[columns_to_display]
+            df.rename(columns={"player_name": "Player", "LA": "AVG LA", "EV": "AVG EV"}, inplace=True)
+            
+            # Calculate max BBE for slider
+            max_bbe = df['BBE'].max()
+            
+            # Create marks for slider
+            marks = {i: str(i) for i in range(0, max_bbe + 1, max(1, max_bbe // 10))}
+            
+            return df.to_dict('records'), max_bbe, marks
         except Exception as e:
-            return html.Div(f"Error reading file: {e}"), [], []
+            return [], 100, {0: '0'}
 
-        if "Pitcher" not in df.columns:
-            return html.Div("Uploaded file does not contain a 'Pitcher' column."), [], []
+    # Callback to sync slider and input
+    @dash_app.callback(
+        Output('bbe-slider', 'value'),
+        Input('bbe-input', 'value'),
+        prevent_initial_call=True
+    )
+    def update_slider(value):
+        return value or 0
 
-        player_options = [{"label": player, "value": player} for player in sorted(df["Pitcher"].unique())]
-        column_options = [{"label": col, "value": col} for col in df.columns if col != "Pitcher"]
+    @dash_app.callback(
+        Output('bbe-input', 'value'),
+        Input('bbe-slider', 'value'),
+        prevent_initial_call=True
+    )
+    def update_input(value):
+        return value or 0
 
-        table = dash_table.DataTable(
-            data=df.to_dicts(),
-            columns=[{"name": col, "id": col} for col in df.columns],
-            page_size=10,
-            style_table={"overflowX": "auto"}
+    @dash_app.callback(
+        Output("output-table", "children"),
+        [Input('stored-data', 'data'),
+         Input("bbe-slider", "value"),
+         Input("page-size-selector", "value")]
+    )
+    def update_table(data, bbe_filter, page_size):
+        if not data:
+            return html.Div("No data available")
+
+        df = pd.DataFrame(data)
+        
+        # Apply BBE filter
+        filtered_df = df[df['BBE'] >= (bbe_filter or 0)]
+
+        return dash_table.DataTable(
+            data=filtered_df.to_dict('records'),
+            columns=[
+                {"name": col, "id": col, "type": "numeric", "format": {"specifier": ".2f"}} if col not in ["Player", "BBE"] else {"name": col, "id": col}
+                for col in filtered_df.columns
+            ],
+            page_size=page_size if page_size != -1 else len(filtered_df),
+            style_table={'overflowX': 'auto'},
+            style_cell={
+                'textAlign': 'center',
+                'height': 'auto',
+                'minWidth': '50px',
+                'whiteSpace': 'normal'
+            },
+            style_header={'backgroundColor': 'rgb(230, 230, 230)', 'fontWeight': 'bold'},
+            filter_action="native",
+            sort_action="native"
         )
-        return html.Div([table]), player_options, column_options
 
     @dash_app.callback(
-        Output("filter-dropdowns", "children"),
-        [Input("column-dropdown", "value")],
-        [State("upload-data", "contents")]
+        Output("download-dataframe", "data"),
+        Input("download-button", "n_clicks"),
+        [State('stored-data', 'data'),
+         State("bbe-slider", "value")],
+        prevent_initial_call=True
     )
-    def update_filter_dropdowns(selected_columns, contents):
-        if not selected_columns or not contents:
-            return html.Div()
-
-        content_type, content_string = contents.split(",")
-        decoded = base64.b64decode(content_string)
-        df = pl.read_csv(io.StringIO(decoded.decode("utf-8")))
-
-        dropdowns = []
-        for col in selected_columns:
-            unique_values = df[col].unique().to_list()
-            dropdowns.append(html.Div([
-                html.Label(f"Select {col}:"),
-                dcc.Dropdown(
-                    id=f"filter-{col}-dropdown",
-                    options=[{"label": val, "value": val} for val in unique_values],
-                    multi=True
-                )
-            ]))
-        return html.Div(dropdowns)
-
-    @dash_app.callback(
-        Output("stats-output", "children"),
-        [Input("player-dropdown", "value"),
-         Input("metric-dropdown", "value")] +
-        [Input(f"filter-{col}-dropdown", "value") for col in ["PitchType", "OtherColumn"]],
-        [State("upload-data", "contents")]
-    )
-    def compute_stats(player, metrics, *filters_and_contents):
-        contents = filters_and_contents[-1]
-        filters = filters_and_contents[:-1]
-
-        if not contents or not player or not metrics:
-            return html.Div("Please upload a file, select a player, and metrics.")
-
-        content_type, content_string = contents.split(",")
-        decoded = base64.b64decode(content_string)
-        df = pl.read_csv(io.StringIO(decoded.decode("utf-8")))
-
-        if "Pitcher" not in df.columns:
-            return html.Div("Uploaded file does not contain a 'Pitcher' column.")
-        player_data = df.filter(pl.col("Pitcher") == player)
-
-        for col, selected_values in zip(["PitchType", "OtherColumn"], filters):
-            if selected_values:
-                player_data = player_data.filter(pl.col(col).is_in(selected_values))
-
-        if player_data.height == 0:
-            return html.Div(f"No data available for the selected filters.")
-
-        metric_labels = {
-            "RelSpeed": "Pitch Speed",
-            "InducedVertBreak": "IVB"
-        }
-
-        stats = []
-        for metric in metrics:
-            label = metric_labels.get(metric, metric)
-            if metric in player_data.columns:
-                avg = player_data[metric].mean()
-                min_val = player_data[metric].min()
-                max_val = player_data[metric].max()
-                stats.append(
-                    html.Div(f"{label}: Avg = {avg:.2f}, Min = {min_val:.2f}, Max = {max_val:.2f}")
-                )
-            else:
-                stats.append(
-                    html.Div(f"{label}: Metric not found in data.")
-                )
-
-        return html.Div(stats)
+    def download_data(n_clicks, data, bbe_filter):
+        if n_clicks > 0 and data:
+            df = pd.DataFrame(data)
+            filtered_df = df[df['BBE'] >= (bbe_filter or 0)]
+            
+            return dict(
+                content=filtered_df.to_csv(index=False),
+                filename='player_performance.csv'
+            )
+        
+        return None
 
     return dash_app
