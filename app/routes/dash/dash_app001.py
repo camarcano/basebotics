@@ -127,9 +127,9 @@ def create_dash_app(flask_app):
     def update_stored_data(start_date, end_date):
         parquet_file = 'savant_2023-03-30_2024-09-30.parquet'
         google_sheet_url = "https://docs.google.com/spreadsheets/d/112FJwhapiSNgxepFJQhJnudk_ub5PI9GBN7DMUKBTjc/export?format=csv"
-        db_file_name = "google_sheet.db"
+        db_file_name = "/var/www/basebotics/datab/google_sheet.db"
         table_name = "google_sheet"
-        output_file = "google_sheet.csv"
+        output_file = "/var/www/basebotics/datab/google_sheet.csv"
 
         dhh_calculator = DHHCalculator(parquet_file, google_sheet_url, db_file_name, table_name, output_file, "/var/www/basebotics/datab")
 
