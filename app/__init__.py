@@ -26,7 +26,7 @@ def create_app():
     return app
 
 # Set up logging
-handler = RotatingFileHandler('/var/www/basebotics/logs/flask_app.log', maxBytes=10000, backupCount=1)
+handler = RotatingFileHandler('/var/www/basebotics/datab/flask_app.log', maxBytes=10000, backupCount=1)
 handler.setLevel(logging.INFO)
 app.logger.addHandler(handler)
 
