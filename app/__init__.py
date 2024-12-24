@@ -3,7 +3,7 @@ from .routes.dash import dashboard_bp, init_dash_app
 
 def create_app():
     app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://carlos:yourpassword@localhost/balldatalab'
+    #app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://carlos:yourpassword@localhost/balldatalab'
     app.config['SECRET_KEY'] = 'rickeyhenderson'
 
     # Initialize extensions
