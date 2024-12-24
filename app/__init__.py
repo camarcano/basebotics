@@ -25,7 +25,7 @@ def create_app():
     handler.setFormatter(formatter)
     app.logger.addHandler(handler)
 
-    @app.before_first_request
+    @app.before_request
     def initialize_logging():
         app.logger.info('Flask app started')
 
