@@ -1,40 +1,59 @@
 import os
 import pandas as pd
 import duckdb
-from datetime import datetime, timedelta
-import gdown
+from datetime import datetime
 import sqlite3
 import numpy as np
-import time
+import gdown
 from concurrent.futures import ThreadPoolExecutor
-import swifter
+import stat
+import shutil
 
 class DHHCalculator:
-    def __init__(self, parquet_file, google_sheet_url, db_file_name, table_name, output_file):
+    def __init__(self, parquet_file, google_sheet_url, db_file_name, table_name, output_file, base_dir):
         """
         Initialize the DHHCalculator with the necessary file paths and URLs.
+        Ensure the base directory exists and files inherit proper permissions.
         """
-        self.parquet_file = parquet_file
+        self.base_dir = base_dir
+        self.parquet_file = os.path.join(base_dir, parquet_file)
         self.google_sheet_url = google_sheet_url
-        self.db_file_name = db_file_name
+        self.db_file_name = os.path.join(base_dir, db_file_name)
         self.table_name = table_name
-        self.output_file = output_file
+        self.output_file = os.path.join(base_dir, output_file)
+
+        # Ensure base directory exists
+        os.makedirs(base_dir, exist_ok=True)
         
+        # Set directory permissions
+        self.set_permissions(base_dir)
+
         # Pre-compile the DHH threshold calculation
         self.calculate_dhh_threshold = np.vectorize(
             lambda x: -0.0049 * x**2 + 0.0853 * x + 105.05
         )
 
+    def set_permissions(self, path):
+        """
+        Ensure proper permissions and ownership of a given path.
+        """
+        try:
+            # Inherit permissions and ownership from the parent directory
+            base_stat = os.stat(path)
+            os.chmod(path, base_stat.st_mode | stat.S_IWUSR | stat.S_IWGRP | stat.S_IROTH)
+            shutil.chown(path, group=base_stat.st_gid)
+        except Exception as e:
+            print(f"Error setting permissions for {path}: {e}")
+
     def load_data(self):
         """
-        Optimized data loading using DuckDB with selective column reading.
+        Load and filter parquet data using DuckDB.
         """
         required_columns = [
             'game_date', 'player_name', 'batter', 'description', 
             'launch_speed', 'launch_angle', 'release_speed', 
             'hit_distance_sc'
         ]
-        
         con = duckdb.connect(database=':memory:')
         try:
             query = f"""
@@ -193,18 +212,27 @@ class DHHCalculator:
         
         return grouped_df
 
+
+
     def merge_with_player_ids(self, df):
         """
-        Optimized player ID merging with efficient database handling.
+        Merge data with player IDs from SQLite database.
         """
+        # Create database if it doesn't exist
         if not os.path.exists(self.db_file_name):
             conn = sqlite3.connect(self.db_file_name)
-            gdown.download(self.google_sheet_url, self.output_file, quiet=False)
-            player_id_df = pd.read_csv(self.output_file)
-            player_id_df.to_sql(self.table_name, conn, index=False)
-            conn.close()
+            try:
+                # Download Google sheet and save to CSV
+                gdown.download(self.google_sheet_url, self.output_file, quiet=False)
+                player_id_df = pd.read_csv(self.output_file)
+                player_id_df.to_sql(self.table_name, conn, index=False)
+            finally:
+                conn.close()
 
-        # Efficient database reading
+            # Set permissions on the database file
+            self.set_permissions(self.db_file_name)
+
+        # Read from the database
         with sqlite3.connect(self.db_file_name) as conn:
             player_id_df = pd.read_sql(f"SELECT * FROM {self.table_name}", conn)
 
@@ -212,10 +240,6 @@ class DHHCalculator:
         df = pd.merge(df, player_id_df, how='left', left_on='batter', right_on='MLBID')
         df.drop(columns=['batter', 'MLBID'], inplace=True, errors='ignore')
         df.rename(columns={'FANGRAPHSNAME': 'Name'}, inplace=True)
-        
-        # Reorder columns efficiently
-        cols = df.columns.tolist()
-        df = df[[cols[0]] + [cols[-1]] + cols[1:-1]]
         
         return df
 
@@ -227,13 +251,14 @@ class DHHCalculator:
 
     def save_to_csv(self, df):
         """
-        Efficient CSV saving.
+        Save the DataFrame to CSV and ensure proper permissions.
         """
         df.to_csv(self.output_file, index=False)
+        self.set_permissions(self.output_file)
 
     def process(self, stdate, endate, min_ip):
         """
-        Optimized main process with parallel processing where beneficial.
+        Optimized main process with error handling and parallel processing.
         """
         try:
             with ThreadPoolExecutor() as executor:
@@ -241,12 +266,10 @@ class DHHCalculator:
                 future_data = executor.submit(self.load_data)
                 data = future_data.result()
                 
-                # Process in parallel
+                # Continue processing
                 processed_data = self.calculate_missing_columns(data)
                 filtered_data = self.filter_data(processed_data, stdate, endate, min_ip)
                 dhh_data = self.calculate_dhh(filtered_data)
-                
-                # Merge and filter operations
                 merged_data = self.merge_with_player_ids(dhh_data)
                 final_data = self.filter_by_min_ip(merged_data, min_ip)
                 
@@ -254,8 +277,6 @@ class DHHCalculator:
                 self.save_to_csv(final_data)
                 
             return final_data
-            
         except Exception as e:
             print(f"An error occurred during processing: {e}")
             raise
-
