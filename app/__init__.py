@@ -18,23 +18,25 @@ def create_app():
     # Initialize Dash app
     init_dash_app(app)
 
-    # Set up logging
+    # Set up logging with timestamps
     handler = RotatingFileHandler('/var/www/basebotics/logs/flask_app.log', maxBytes=10000, backupCount=1)
     handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
     app.logger.addHandler(handler)
 
-    @app.before_request
+    @app.before_first_request
     def initialize_logging():
         app.logger.info('Flask app started')
 
     @app.errorhandler(500)
     def internal_error(error):
-        app.logger.error('Server Error: %s', (error))
+        app.logger.error('Server Error: %s', error)
         return render_template('500.html'), 500
 
     @app.errorhandler(Exception)
     def unhandled_exception(e):
-        app.logger.error('Unhandled Exception: %s', (e))
+        app.logger.error('Unhandled Exception: %s', e)
         return render_template('500.html'), 500
 
     return app
